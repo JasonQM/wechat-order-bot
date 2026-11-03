@@ -212,8 +212,8 @@ class Bot:
         # 像素哨兵：上一轮看到的画面指纹，以及上次「强制完整扫描」的时间
         self.last_view_sig = None
         self.last_force_full = 0.0
-        self.handled = {}         # dHash -> 订单号。本次运行内抓过图的，避免重复抓
-        self.thumb_attempts = {}  # 缩略图 dHash -> 已尝试次数（进程内累积，防死循环）
+        self.handled = {}         # (群名, dHash) -> 订单号。本次运行内抓过图的
+        self.thumb_attempts = {}  # (群名, 缩略图 dHash) -> 已尝试次数，防死循环
         self.last_send_ts = 0.0
         self.group_send_times = {}
 
@@ -327,10 +327,19 @@ class Bot:
         except Exception:
             dedupe_key = tkey or sha256_file(tmp_path)
 
-        if dedupe_key in self.handled:
-            # 本次运行已经抓过这张图。顺手把它这处缩略图记下来，
+        # 本次运行内的去重键必须带群名。
+        #
+        # 早先这里只用图片指纹，后果是跨群串扰：
+        # A 群处理过某张加油机照片后，B 群再发同一张（同一批发货、同样的屏显），
+        # B 群那张会在抓图后立刻被判成 dup_session 丢掉 —— 数据库去重
+        # （find_by_sha 带 group_name）本来是分群的，反倒被这道内存检查抢先误杀。
+        # 实测两个测试群发同一张照片就会触发，群越多越容易撞。
+        skey = (group_name, dedupe_key)
+
+        if skey in self.handled:
+            # 本群这次运行已经抓过这张图。顺手把它这处缩略图记下来，
             # 这样下一轮（甚至下一次翻页）就能在【点开之前】判出来。
-            oid = self.handled.get(dedupe_key)
+            oid = self.handled.get(skey)
             if tkey:
                 store.add_seen_thumb(group_name, tkey, oid)
             os.remove(tmp_path)
@@ -347,7 +356,7 @@ class Bot:
             # 已发送 / 待人工：跳过，绝不重复
             if st in ("auto_sent", "manual_sent", "manual_pending"):
                 os.remove(tmp_path)
-                self.handled[dedupe_key] = existed["id"]
+                self.handled[skey] = existed["id"]
                 log(f"  · 这张图处理过（订单 #{existed['id']}，{st}），跳过")
                 return False, "dup_db"
             # processing：上次识别到一半断了（异常、断电、被强杀）。
@@ -360,13 +369,22 @@ class Bot:
             # ready：识别已完成、只是还没发出去 —— 接着发，不重新建单
             if existed and st == "ready" and existed["final_cents"]:
                 os.remove(tmp_path)
-                self.handled[dedupe_key] = existed["id"]
+                self.handled[skey] = existed["id"]
                 log(f"  · 订单 #{existed['id']} 已识别待发送，续跑发送")
                 return True, self._reply_order(
                     hwnd, layout, rect, group_name, existed["id"],
                     existed["sender"], existed["final_cents"])
 
-        final_path = os.path.join(out_dir, f"{dedupe_key}.png")
+        # 文件名带上群标识。
+        #
+        # 原来只用图片内容指纹做文件名，两个群发同一张照片（同一批发货、
+        # 同样的屏显，很常见）就会写到同一个路径上，后到的把先到的覆盖掉。
+        # 数据库里两条订单的 image_path 指向同一个文件，翻订单记录时
+        # 看到的就是"B 群的单配了 A 群的截图"，排查时极其误导。
+        # 用群名的短哈希而不是群名本身：群名里有中文、空格、emoji，
+        # 直接拼进文件名在部分环境下会出问题。
+        gtag = hashlib.md5(group_name.encode("utf-8")).hexdigest()[:6]
+        final_path = os.path.join(out_dir, f"{gtag}_{dedupe_key}.png")
         os.replace(tmp_path, final_path)
 
         sender_name = bubble.get("sender")
@@ -383,7 +401,7 @@ class Bot:
             image_sha256=dedupe_key,
             note="已抓图，等待识别",
         )
-        self.handled[dedupe_key] = order_id
+        self.handled[skey] = order_id
         if tkey:
             store.add_seen_thumb(group_name, tkey, order_id)
         log(f"  · 已建单 #{order_id}（待识别）")
@@ -406,7 +424,7 @@ class Bot:
                 detail_check="fail",
                 note=reason[:500],
             )
-            self.handled.pop(dedupe_key, None)  # 放出去，允许下一轮重试
+            self.handled.pop(skey, None)        # 放出去，允许下一轮重试
             log(f"  ✗ 订单 #{order_id} {reason}")
             return True, "recognize_error"
 
@@ -511,11 +529,23 @@ class Bot:
                     r2 = sender.send_image(hwnd, layout, img_path,
                                            group_name=group_name, force=True,
                                            rect=rect)
+                    # 文本发出去了、收款码没发出去，这单【不算回复完成】。
+                    #
+                    # 早先这里只改 note、status 仍是 auto_sent，于是照样 mark_replied，
+                    # 面板显示"已回复"，客户却只收到一句金额、没有付款码。
+                    # 而 replied=1 又会让下一轮直接跳过，这单永远补不上。
+                    #
+                    # 也不能设成 failed 让它自动重发 —— 重发会把文本再发一遍，
+                    # 客户看到两条报价。所以标 manual_pending：停在这，
+                    # 等人去补一张收款码，note 里写清楚发生了什么。
                     if not r2.get("ok"):
-                        note = "文本已发，图片失败：" + r2.get("note", "")
+                        status = "manual_pending"
+                        note = ("文本已发，收款码未发出（" + r2.get("note", "") +
+                                "）。请人工补发一张收款码，不要再重发文本")
                         reply_image_fp = ""     # 没发成，别把这单记成「发过这张图」
                     elif r2.get("verified") is False:
-                        note = "文本已发；图片未检出增量，请人工确认"
+                        status = "manual_pending"
+                        note = "文本已发；收款码未检出增量，请人工确认是否已发出"
                 else:
                     note = "未配置固定图片，只发了文本"
                 self._mark_sent(group_name)
@@ -585,7 +615,21 @@ class Bot:
             if not verdict["allowed"]:
                 log(f"  · 顶栏「{title}」不在白名单（{verdict['reason']}），跳过")
                 return 0
-            group_name = verdict["canonical"] or title
+
+            # 关键：必须确认切到的是【目标群】，不能只确认"切到了某个白名单群"。
+            #
+            # 侧边栏宽度有限，长群名会被截断，只差最后一两位的两个群
+            # （某某加油15100 / 某某加油15101）截断后完全一样，
+            # 点到哪个全凭运气。如果只校验"在名单里"，切错了也会放行，
+            # 接着就在 A 群里处理 B 群的图 —— 最坏情况是把报价和收款码
+            # 发到不相干的群里，收错钱。
+            got_name = verdict["canonical"] or title
+            if (g_mod.normalize(got_name, self.groups_conf)
+                    != g_mod.normalize(group_name, self.groups_conf)):
+                log(f"  ✗ 切群切错：目标「{group_name}」，实际停在「{got_name}」，"
+                    f"本群跳过（不在错群里操作）")
+                return 0
+            group_name = got_name
 
         canonical = group_name
 
@@ -611,12 +655,14 @@ class Bot:
         # 往上翻页后同一张图会落在不同 y 坐标，但指纹不变，不该再点一次。
         attempted = set()
         done_boxes = []
-        clean_screens = 0     # 连续多少屏"一张要处理的图都没有"
+        empty_screens = 0     # 连续多少屏【完全没有对方图片】
+        seen_pages = 0        # 本轮实际回溯了几屏（只用于日志）
         did_scroll = False    # 本轮是否真的往上翻过页（决定收尾要不要滚回底部）
 
         try:
             for page in range(max_screens + 1):
                 page_actionable = False
+                page_saw_image = False
                 grabs = 0
 
                 # 整屏只做一次 capture + OCR，供本屏所有图复用。
@@ -639,6 +685,8 @@ class Bot:
                     imgs = [b for b in bubbles
                             if b["type"] == "image" and b.get("side") == "in"]
                     imgs.sort(key=lambda b: b["y_top"])
+                    if imgs:
+                        page_saw_image = True
 
                     # 下方已经有我方报价的图：这是最可靠的"已处理"判据
                     replied = perceive.replied_image_boxes(bubbles, hints)
@@ -652,7 +700,10 @@ class Bot:
                             continue
                         if k in attempted:
                             continue
-                        if self.thumb_attempts.get(k, 0) >= max_attempt:
+                        # 尝试计数同样要带群：不同群里同一处位置、同一张照片
+                        # 是完全正常的事，共用一个计数器会让 A 群把 B 群的额度耗光。
+                        akey = (canonical, k)
+                        if self.thumb_attempts.get(akey, 0) >= max_attempt:
                             continue
                         if any(_box_overlap(b["box"], d) > 0.4 for d in done_boxes):
                             attempted.add(k)
@@ -680,8 +731,8 @@ class Bot:
                         break
 
                     attempted.add(target_key)
-                    self.thumb_attempts[target_key] = \
-                        self.thumb_attempts.get(target_key, 0) + 1
+                    akey = (canonical, target_key)
+                    self.thumb_attempts[akey] = self.thumb_attempts.get(akey, 0) + 1
                     done_boxes.append(target["box"])
                     if len(done_boxes) > 40:
                         done_boxes.pop(0)
@@ -717,20 +768,27 @@ class Bot:
                 # ---------------- 翻页 ----------------
                 #
                 # 这里必须往上翻，不能"本屏没活干就收工"。
-                # 反例就是最常见的稳态：客户发图 → 我回报价文本 → 我发收款码。
-                # 滚到最底部时，屏幕上全是**我的**收款码，客户那张订单图在上一屏。
-                # 如果首屏没看到要处理的图就退出，等于永远看不见订单。
+                # 最常见的稳态是：客户发图 → 我回报价文本 → 我发收款码。
+                # 滚到最底部时屏幕上全是**我的**收款码，客户那张订单图在上一屏。
+                # 首屏没看到要处理的图就退出，等于永远看不见订单。
                 #
-                # 但又不能无脑翻满 5 屏：空群也要花 5 次整窗 OCR（十几秒）白跑。
-                # 折中——连续两屏都"一张要处理的图都没有"才停。
-                # 这样首屏 + 上一屏（订单图所在的那屏）都会被看过，
-                # 再往上就确实是处理过的历史了。
-                if page_actionable:
-                    clean_screens = 0
+                # 停止判据只看【这一屏有没有对方的图片】：
+                #   · 有图（不管处理没处理）→ 不算空，上面可能还有更早的
+                #   · 完全没图            → 算一屏空
+                # 连续两屏完全没图才停。
+                #
+                # 早先的判据是"连续两屏没有【要处理的】图"，把"有图但都处理过了"
+                # 也算进空屏里。这在连发场景下会提前收工：两屏都是已处理的旧图，
+                # 再往上还有一张没处理的，就直接不看了。
+                seen_pages = page + 1
+                if page_saw_image:
+                    empty_screens = 0
                 else:
-                    clean_screens += 1
-                    if clean_screens >= 2 and not self.deep:
-                        break
+                    empty_screens += 1
+
+                if not self.deep and empty_screens >= 2:
+                    log(f"  · 连续 {empty_screens} 屏没有图片，回溯止于第 {seen_pages} 屏")
+                    break
 
                 if snap is None:
                     break

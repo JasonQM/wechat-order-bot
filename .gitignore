@@ -66,3 +66,6 @@ desktop.ini
 *.bak
 *.tmp
 start_bot.bat.bak
+
+# 本地辅助脚本：只在本机双击用，不进仓库
+push_to_github.bat
