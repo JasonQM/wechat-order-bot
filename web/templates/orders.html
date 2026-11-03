@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}订单记录{% endblock %}
+
+{% set qs = 'from=' ~ (f.from|urlencode) ~ '&to=' ~ (f.to|urlencode) ~ '&group=' ~ (f.group|urlencode) ~ '&status=' ~ (f.status|urlencode) ~ '&q=' ~ (f.q|urlencode) %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>订单记录</h1>
+    <div class="sub">共 {{ total }} 条</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-body">
+    <form class="filters" method="get">
+      <div class="field">
+        <label>起始日期</label>
+        <input type="date" name="from" value="{{ f.from }}">
+      </div>
+      <div class="field">
+        <label>结束日期</label>
+        <input type="date" name="to" value="{{ f.to }}">
+      </div>
+      <div class="field">
+        <label>群</label>
+        <select name="group">
+          <option value="">全部群</option>
+          {% for g in groups %}
+          <option value="{{ g }}" {{ 'selected' if f.group == g }}>{{ g }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label>状态</label>
+        <select name="status">
+          <option value="">全部状态</option>
+          {% for k, v in STATUS_LABELS.items() %}
+          <option value="{{ k }}" {{ 'selected' if f.status == k }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label>搜索昵称 / 备注</label>
+        <input type="text" name="q" value="{{ f.q }}" placeholder="关键词">
+      </div>
+      <button class="btn primary" type="submit">筛选</button>
+      <a class="btn" href="{{ url_for('orders') }}">重置</a>
+    </form>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-body tight">
+    {% if rows %}
+    <table>
+      <thead>
+        <tr>
+          <th style="width:66px">截图</th>
+          <th style="width:112px">时间</th>
+          <th>群</th>
+          <th style="width:96px">昵称</th>
+          <th style="width:96px">截图合计</th>
+          <th style="width:96px">折后报价</th>
+          <th style="width:70px">置信度</th>
+          <th style="width:96px">状态</th>
+          <th style="width:104px">是否回复</th>
+          <th style="width:110px">备注</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>
+            {% if r.image_path %}
+            <img class="thumb" src="{{ url_for('images', filename=r.image_path) }}" data-zoom alt="截图">
+            {% else %}
+            <div class="thumb empty">无图</div>
+            {% endif %}
+          </td>
+          <td class="nowrap muted">{{ r.created_at|dt }}</td>
+          <td>{{ r.group_name }}</td>
+          <td>{{ r.sender or '-' }}</td>
+          <td class="num">{{ yuan(r.ocr_total_cents) }}</td>
+          <td class="money">{{ yuan(r.final_cents) }}</td>
+          <td class="num muted">{{ r.min_confidence|pct }}</td>
+          <td><span class="badge {{ STATUS_TONE.get(r.status,'muted') }}">{{ STATUS_LABELS.get(r.status, r.status) }}</span></td>
+          <td class="nowrap">
+            {% if r.replied %}
+            <span class="badge ok">已回复</span>
+            <div class="muted" style="font-size:11.5px">{{ r.replied_at|dt }}</div>
+            {% else %}
+            <span class="badge warn">未回复</span>
+            {% endif %}
+          </td>
+          <td class="muted">{{ r.note or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+      <div class="big">没有符合条件的订单</div>
+      <div>调整筛选条件试试，或先运行 <span class="mono">python web/seed.py</span></div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if pages > 1 %}
+  <div class="pager">
+    {% if page > 1 %}
+    <a href="?{{ qs }}&page={{ page - 1 }}">上一页</a>
+    {% endif %}
+    <span class="cur">{{ page }} / {{ pages }}</span>
+    {% if page < pages %}
+    <a href="?{{ qs }}&page={{ page + 1 }}">下一页</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

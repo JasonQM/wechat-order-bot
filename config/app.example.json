@@ -1,0 +1,91 @@
+{
+  "_说明": "全局配置。API Key 和模型填这里；改完不用重启代码，每轮会重新读。",
+  "discount_percent": 95,
+  "vision": {
+    "_说明": "云端视觉大模型。mimo-v2.6-flash 实测能正确读出加油机七段数码管。",
+    "base_url": "https://api.xiaomimimo.com/v1",
+    "api_key": "YOUR_API_KEY_HERE",
+    "model": "mimo-v2.6-flash",
+    "timeout": 120,
+    "max_image_side": 1000,
+    "temperature": 0,
+    "max_tokens": 3000,
+    "samples": 3,
+    "votes_needed": 2,
+    "_samples_说明": "同一张图采样几次。实测同一模型两次结果可能不同，多采样投票能显著提高准确率。",
+    "jpeg_quality": 78,
+    "_image_说明": "发给模型的图会先缩到 max_image_side 再按 jpeg_quality 压缩。实测 1600/92 时要 111 秒（顶到 120 秒超时线），压到 1200/85 后上传快很多。",
+    "_max_tokens_说明": "mimo 是推理模型，思考过程会吃掉 token。实测 2000 时偶发 finish_reason=length（输出被截断，整次采样报废）。提到 3000 更稳。"
+  },
+  "ocr": {
+    "_说明": "本地 OCR（通道B）。window_max_width 是整窗扫描时的降采样上限，订单截图走原分辨率。",
+    "window_max_width": 1400,
+    "min_score": 0.5
+  },
+  "safety": {
+    "_说明": "dry_run=true 时只识别不发送，适合第一次联调。真正上线前必须显式改 false。",
+    "dry_run": true,
+    "send_interval_sec": 8,
+    "send_interval_jitter": 3,
+    "per_group_hourly_limit": 30,
+    "max_scroll_screens": 5,
+    "send_verify_timeout_sec": 3,
+    "full_scan_interval_sec": 120,
+    "_full_scan_说明": "每隔多少秒做一次\"带目标滚动扫描\"。白名单群若【置顶】，快速轮次就能看到它，这个扫描几乎不用干活（1秒）；若没置顶，每次都要滚到它所在的位置（实测 18 秒），且扫描本身会改变画面，导致下一轮再完整进群一次（26 秒）。所以：把群置顶比调这个数字有用得多。",
+    "max_grab_attempts": 3,
+    "_max_grab_attempts_说明": "同一张图最多尝试几次取图/识别。超过就跳过，防止反复点开同一张图。",
+    "max_grabs_per_group": 8,
+    "_max_grabs_per_group_说明": "单群单轮最多抓取几张图，防止异常情况下反复点击。",
+    "force_full_interval_sec": 60,
+    "_force_full_interval_说明": "像素哨兵：画面没变就跳过整轮（耗时从十几秒降到几十毫秒）。但这个秒数到了，无论画面有没有变化都强行走一次完整扫描——用来兜住\"画面没变但有待办\"的情况，比如上次取图失败要重试、或者微信自己重排了列表。",
+    "quiet_hours": "23:30-07:00",
+    "_quiet_hours_说明": "夜间低频时段，格式 \"开始-结束\"，跨零点也可以。这段时间照常扫描，只是把轮询间隔从 1 秒拉到 quiet_interval_sec 秒——凌晨一直高频翻会话列表是明显的异常行为特征，但晚上也有人加油，不能完全停。留空表示不做限制。",
+    "quiet_interval_sec": 25,
+    "scan_allowed_always": true,
+    "_scan_allowed_always_说明": "白名单群是否无条件巡检（不看未读红点）。默认 true，强烈建议保持：红点在免打扰群上不显示、你点开看过就消失、微信偶尔还不刷新，靠它决定要不要进群会直接漏单——实测某个群整整半小时没被巡检过，客户发的图一直没处理。只有白名单超过十来个群、嫌每轮扫描太慢时，才把它设成 false。"
+  },
+  "reply": {
+    "_说明": "{name} 为昵称，为空时自动去掉前缀；{total} 截图合计；{final} 折后价。",
+    "template": "{name}，订单合计 {total} 元，{discount_percent} 折后 {final} 元",
+    "discount_label": "95 折",
+    "image": "assets/reply_image.jpg",
+    "mention": true,
+    "detect_keywords": [
+      "订单合计",
+      "折后"
+    ],
+    "_detect_keywords_说明": "用来判断「这张图下面是不是已经有我的回复」。只要图上方的回复文本里含有其中任意一个词，就认为这单处理过了，直接跳过、不点开图片。改了回复模板记得同步改这里，否则识别不到已回复的图，会退化成靠图片指纹判重（慢，但不会错）。"
+  },
+  "paths": {
+    "images": "data/images",
+    "logs": "logs"
+  },
+  "text_model": {
+    "_说明": "文本模型（降级用）。视觉模型不可用时，用本地OCR原文+文本模型解析。",
+    "base_url": "https://api.xiaomimimo.com/v1",
+    "api_key": "YOUR_API_KEY_HERE",
+    "model": "mimo-v2.6-flash",
+    "timeout": 90,
+    "max_tokens": 1500
+  },
+  "recognition": {
+    "mode": "local_then_ocr_space",
+    "_mode_说明": "local_then_ocr_space=本地优先，读不出才调在线（默认，最省配额）；local=只用本地；ocr_space=只用在线；hybrid=两路并行且金额必须一致（最严也最易误拦）；local_then_cloud=本地优先再走云端视觉模型；cloud=只用云端模型。",
+    "skip_cloud_without_panel": true,
+    "_skip_cloud_说明": "画面里找不到加油机显示屏时，是否跳过云端兜底直接失败。默认 true：客户误发的收款码/聊天截图走云端要白等 31 秒最后还是失败。如果你的客户会发「没有七段屏的纸质小票」，把这个改成 false。"
+  },
+  "ocr_space": {
+    "enabled": true,
+    "api_key": "YOUR_API_KEY_HERE",
+    "language": "chs",
+    "engine": 3,
+    "scale": "true",
+    "timeout": 30,
+    "_说明": "本地识别后，用它独立核对一次金额（只核对金额，不替代本地）。实测同一张金额行：它读 '700.00'（小数点保住），本地读 '70000'（小数点被吞）；但它读油量是 '8:40'（正确 81.40），所以不拿它当主通道。语言必须用 chs：英文引擎会把小数点当标点吞掉。任何异常只记提示、不阻断流程。"
+  },
+  "testing": {
+    "force_amount_cents": 0,
+    "_说明": "测试用：大于 0 时，所有图片直接按这个金额处理，跳过真实识别。用于验证 算价→发文本→发图→落库→报表 全流程是否通畅。⚠️ 正式使用前必须改回 0，否则所有订单都会报成这个金额。当前已关闭（0），走真实识别。"
+  },
+  "_example说明": "这是配置模板。复制成 config/app.json 再填自己的密钥：\n  copy config\\app.example.json config\\app.json   (Windows)\n  cp config/app.example.json config/app.json      (macOS/Linux)\n真实 app.json 已被 .gitignore 排除，不会进版本库。"
+}

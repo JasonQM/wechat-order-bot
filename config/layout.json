@@ -1,0 +1,13 @@
+{
+  "_comment": "微信主窗口布局比例。默认值来自参考仓库（微信 3.x 实测）。4.x 若切会话点不准，改这里，不用动代码。",
+  "_how_to_calibrate": "跑 python src/check_window.py，看 probe_out/layout_check.png 里画的框是否贴合真实区域，然后按比例微调下面四个值。",
+  "sidebar_w_ratio": 0.055,
+  "sidebar_w_min": 55,
+  "chat_start_x_ratio": 0.285,
+  "chat_start_x_min": 320,
+  "header_h_ratio": 0.110,
+  "header_h_min": 85,
+  "input_h_ratio": 0.160,
+  "input_h_min": 140,
+  "input_h_max": 220
+}

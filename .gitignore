@@ -1,0 +1,68 @@
+# ============================================================
+#  这个项目会往群里发报价、收款码，很多文件属于「本地私货」，
+#  不能进版本库。下面每一条都对应一个具体的泄露风险。
+# ============================================================
+
+# ---------- 密钥 ----------
+# 含 3 个 API key（视觉模型、文本模型、OCR.Space）。
+# 模板见 config/app.example.json。
+config/app.json
+# 含真实客户群名，同样不进仓库；模板见 config/groups.example.json
+config/groups.json
+
+# ---------- 个人收款信息 ----------
+# assets/reply_image.jpg 是收款码，price_card.png 是价目卡。
+# 公开出去等于把自己的收款码贴在互联网上。
+assets/*.jpg
+assets/*.jpeg
+assets/*.png
+assets/*.webp
+
+# ---------- 工具工作目录 ----------
+# 这是开发过程中的会话记录，不是项目代码
+.workbuddy/
+
+# ---------- 客户隐私 ----------
+# data/orders.db   订单库：群名、发送者昵称、金额
+# data/images/     客户发来的加油机照片原图
+# data/samples/    样本照片
+data/
+!data/.gitkeep
+
+# ---------- 运行痕迹 ----------
+# 日志里有群名、昵称、金额；probe_out 是调试截图（69MB，含微信画面）。
+logs/
+probe_out/
+*.log
+
+# ---------- 参考仓库 ----------
+# 这是第三方代码，版权归原作者，不适合随本项目一起分发。
+_ref/
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 本地临时 ----------
+*.bak
+*.tmp
+start_bot.bat.bak

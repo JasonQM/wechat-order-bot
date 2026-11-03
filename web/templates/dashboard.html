@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% block title %}数据面板{% endblock %}
+
+{% block content %}
+<div class="botbar {{ bot.tone }}" id="botbar"
+     data-state="{{ bot.state }}" data-age="{{ bot.age_sec or 0 }}">
+  <span class="dot"></span>
+  <b>{{ bot.label }}</b>
+  {% if bot.state == 'running' %}
+  <span class="muted">
+    {% if bot.dry_run %}<b class="dry">只识别不发送</b> · {% endif %}
+    已跑 {{ bot.cycles }} 轮 · 最近一轮 {{ bot.last_duration_sec }}s
+    {% if bot.allowed_total %}
+      · 白名单 {{ bot.allowed_visible }}/{{ bot.allowed_total }} 个群在本次扫描范围内
+      {% if bot.allowed_visible < bot.allowed_total %}
+        <b class="dry">（其余要等全量扫描，建议把群置顶）</b>
+      {% endif %}
+    {% endif %}
+  </span>
+  {% elif bot.state == 'never' %}
+  <span class="muted">{{ bot.detail }}</span>
+  {% else %}
+  <span class="muted">{{ bot.detail }}</span>
+  {% endif %}
+  {% if bot.last_error %}
+  <span class="err" title="{{ bot.last_error }}">最近错误：{{ bot.last_error[:60] }}</span>
+  {% endif %}
+
+  <span class="bot-actions" id="botActions"></span>
+</div>
+
+{% if bot.testing_cents %}
+<div class="warn-box" style="margin-bottom:14px">
+  <b>⚠ 测试模式已开启</b>：所有图片一律按
+  <b>{{ yuan(bot.testing_cents) }} 元</b> 处理，<b>不做真实识别</b>。
+  这是用来验证「算价 → 发文本 → 发图 → 落库 → 报表」整条链路的。
+  正式使用前，请把 <code>config/app.json</code> 里的
+  <code>testing.force_amount_cents</code> 改回 <code>0</code>。
+</div>
+{% endif %}
+<div class="page-head">
+  <div>
+    <h1>数据面板</h1>
+    <div class="sub">今日 {{ kpi.total }} 单 · 累计折让 {{ yuan(kpi.cut) }} 元</div>
+  </div>
+  <div class="filters">
+    <div class="field">
+      <label>统计区间</label>
+      <select onchange="location.href='?days=' + this.value">
+        {% for d in [7, 14, 30, 60] %}
+        <option value="{{ d }}" {{ 'selected' if days == d }}>近 {{ d }} 天</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="label">今日单量</div>
+    <div class="value">{{ kpi.total }}<small>单</small></div>
+  </div>
+  <div class="kpi ok">
+    <div class="label">今日折后金额</div>
+    <div class="value">{{ yuan(kpi.amount) }}<small>元</small></div>
+  </div>
+  <div class="kpi">
+    <div class="label">今日折让</div>
+    <div class="value">{{ yuan(kpi.cut) }}<small>元</small></div>
+  </div>
+  <div class="kpi {{ 'ok' if kpi.unreplied == 0 else 'warn' }}">
+    <div class="label">今日已回复</div>
+    <div class="value">{{ kpi.replied }}<small>/ {{ kpi.total }}</small></div>
+  </div>
+  <div class="kpi {{ 'warn' if kpi.all_pending else '' }}">
+    <div class="label">待人工处理</div>
+    <div class="value">{{ kpi.all_pending }}<small>条</small></div>
+  </div>
+  <div class="kpi {{ 'bad' if kpi.failed else '' }}">
+    <div class="label">今日失败</div>
+    <div class="value">{{ kpi.failed }}<small>条</small></div>
+  </div>
+  <div class="kpi">
+    <div class="label">平均处理耗时</div>
+    <div class="value">{{ '%.1f'|format(kpi.avg_ms / 1000) if kpi.avg_ms else '-' }}<small>秒</small></div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>单量与金额趋势</h2>
+      <span class="muted">近 {{ days }} 天</span>
+    </div>
+    <div class="panel-body">
+      <div id="chart-trend" class="chart"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>状态构成</h2>
+    </div>
+    <div class="panel-body">
+      <div id="chart-status" class="chart"></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>群分布</h2>
+    <span class="muted">近 {{ days }} 天单量</span>
+  </div>
+  <div class="panel-body">
+    <div id="chart-group" class="chart sm"></div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>最近订单</h2>
+    <a href="{{ url_for('orders') }}" class="btn sm">查看全部</a>
+  </div>
+  <div class="panel-body tight">
+    {% if recent %}
+    <table>
+      <thead>
+        <tr>
+          <th style="width:70px">截图</th>
+          <th style="width:110px">时间</th>
+          <th>群</th>
+          <th style="width:100px">昵称</th>
+          <th style="width:100px">截图合计</th>
+          <th style="width:100px">折后报价</th>
+          <th style="width:100px">状态</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in recent %}
+        <tr>
+          <td>
+            {% if r.image_path %}
+            <img class="thumb" src="{{ url_for('images', filename=r.image_path) }}" data-zoom alt="截图">
+            {% else %}
+            <div class="thumb empty">无图</div>
+            {% endif %}
+          </td>
+          <td class="nowrap muted">{{ r.created_at|dt }}</td>
+          <td>{{ r.group_name }}</td>
+          <td>{{ r.sender or '-' }}</td>
+          <td class="num">{{ yuan(r.ocr_total_cents) }}</td>
+          <td class="money">{{ yuan(r.final_cents) }}</td>
+          <td><span class="badge {{ STATUS_TONE.get(r.status,'muted') }}">{{ STATUS_LABELS.get(r.status, r.status) }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+      <div class="big">还没有订单记录</div>
+      <div>运行 <span class="mono">python web/seed.py</span> 灌演示数据，或等机器人写入第一条</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<script>
+  const SERIES = {{ series|tojson }};
+  const GROUPS = {{ groups|tojson }};
+  const STATUSES = {{ statuses|tojson }};
+
+  const FONT = 'system-ui, -apple-system, "Microsoft YaHei", sans-serif';
+  const AXIS = '#6b7280';
+  const LINE = '#e6e8eb';
+
+  if (window.echarts) {
+    // 趋势
+    echarts.init(document.getElementById('chart-trend')).setOption({
+      textStyle: { fontFamily: FONT },
+      grid: { left: 8, right: 8, top: 40, bottom: 8, containLabel: true },
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      legend: { data: ['单量', '金额(元)'], right: 0, top: 0, textStyle: { color: AXIS, fontSize: 12 } },
+      xAxis: {
+        type: 'category', data: SERIES.labels,
+        axisLine: { lineStyle: { color: LINE } },
+        axisLabel: { color: AXIS, fontSize: 11 }, axisTick: { show: false }
+      },
+      yAxis: [
+        { type: 'value', name: '单量', nameTextStyle: { color: AXIS, fontSize: 11 },
+          splitLine: { lineStyle: { color: LINE } }, axisLabel: { color: AXIS, fontSize: 11 } },
+        { type: 'value', name: '元', nameTextStyle: { color: AXIS, fontSize: 11 },
+          splitLine: { show: false }, axisLabel: { color: AXIS, fontSize: 11 } }
+      ],
+      series: [
+        { name: '单量', type: 'bar', data: SERIES.counts, barMaxWidth: 22,
+          itemStyle: { color: '#bfd4fb', borderRadius: [4, 4, 0, 0] } },
+        { name: '金额(元)', type: 'line', yAxisIndex: 1, data: SERIES.amounts,
+          smooth: true, symbolSize: 5, lineStyle: { width: 2, color: '#2563eb' },
+          itemStyle: { color: '#2563eb' } }
+      ]
+    });
+
+    // 状态构成
+    echarts.init(document.getElementById('chart-status')).setOption({
+      textStyle: { fontFamily: FONT },
+      tooltip: { trigger: 'item' },
+      legend: { bottom: 0, textStyle: { color: AXIS, fontSize: 12 } },
+      color: ['#16a34a', '#d97706', '#0891b2', '#dc2626', '#9ca3af'],
+      series: [{
+        type: 'pie', radius: ['48%', '72%'], center: ['50%', '44%'],
+        avoidLabelOverlap: true,
+        itemStyle: { borderColor: '#fff', borderWidth: 2 },
+        label: { show: false },
+        data: STATUSES.length ? STATUSES : [{ name: '暂无数据', value: 1 }]
+      }]
+    });
+
+    // 群分布
+    const gNames = GROUPS.map(g => g.name).reverse();
+    const gCounts = GROUPS.map(g => g.count).reverse();
+    echarts.init(document.getElementById('chart-group')).setOption({
+      textStyle: { fontFamily: FONT },
+      grid: { left: 8, right: 40, top: 12, bottom: 8, containLabel: true },
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      xAxis: { type: 'value', splitLine: { lineStyle: { color: LINE } },
+               axisLabel: { color: AXIS, fontSize: 11 } },
+      yAxis: { type: 'category', data: gNames.length ? gNames : ['暂无数据'],
+               axisLine: { lineStyle: { color: LINE } },
+               axisTick: { show: false }, axisLabel: { color: AXIS, fontSize: 12 } },
+      series: [{
+        type: 'bar', data: gCounts, barMaxWidth: 16,
+        itemStyle: { color: '#93b8f7', borderRadius: [0, 4, 4, 0] },
+        label: { show: true, position: 'right', color: AXIS, fontSize: 11 }
+      }]
+    });
+  }
+
+  // 状态条每 10 秒自查一次。
+  // 挂机时没人会一直盯着这个页面，所以它得自己会变红——
+  // 机器人停了、卡住了，用户看到的第一眼就该知道。
+  (function watchBot() {
+    const bar = document.getElementById('botbar');
+    if (!bar) return;
+
+    const refresh = async () => {
+      try {
+        const r = await fetch('/api/health', { cache: 'no-store' });
+        const s = await r.json();
+        bar.className = 'botbar ' + s.tone;
+        bar.querySelector('b').textContent = s.label;
+
+        const tail = bar.querySelector('.muted');
+        if (tail) {
+          if (s.state === 'running') {
+            let t = (s.dry_run ? '只识别不发送 · ' : '') +
+              `已跑 ${s.cycles} 轮 · 最近一轮 ${s.last_duration_sec}s`;
+            if (s.allowed_total) {
+              t += ` · 白名单 ${s.allowed_visible}/${s.allowed_total} 个群在扫描范围`;
+              if (s.allowed_visible < s.allowed_total) {
+                t += '（其余等全量扫描，建议置顶）';
+              }
+            }
+            tail.textContent = t;
+          } else {
+            tail.textContent = s.detail || '';
+          }
+        }
+
+        renderActions(s);
+        let err = bar.querySelector('.err');
+        if (s.last_error) {
+          if (!err) {
+            err = document.createElement('span');
+            err.className = 'err';
+            bar.appendChild(err);
+          }
+          err.textContent = '最近错误：' + s.last_error.slice(0, 60);
+          err.title = s.last_error;
+        } else if (err) {
+          err.remove();
+        }
+      } catch (e) { /* 面板自己断了就不用再喊了 */ }
+    };
+
+    // 启停按钮。
+    // 「暂停」保留进程（恢复快）；「停止」让进程退出并释放实例锁。
+    // 夜间状态是 quiet —— 那句话的意思是"还在跑，只是间隔拉长了"，
+    // 早先它会落到 else 分支显示成「启动监控」，用户以为停了，一点又报"已在运行"。
+    function renderActions(s) {
+      const box = document.getElementById('botActions');
+      if (!box) return;
+
+      const alive = ['running', 'slow', 'quiet'].includes(s.state);
+      const paused = s.state === 'paused';
+      const items = [];
+
+      if (paused) items.push({ label: '继续监控', action: 'resume', cls: 'act-ok' });
+      else if (alive) items.push({ label: '暂停监控', action: 'pause', cls: 'act-warn' });
+      else items.push({ label: '启动监控', action: 'start', cls: 'act-ok' });
+
+      if (alive || paused) items.push({ label: '停止', action: 'stop', cls: 'act-bad' });
+
+      const key = s.state + '|' + items.map(i => i.action).join(',');
+      if (box.dataset.key === key) return;      // 状态没变就不重绘，免得按钮一直闪
+      box.dataset.key = key;
+      box.innerHTML = '';
+
+      items.forEach((it, idx) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'bot-btn ' + it.cls;
+        btn.textContent = it.label;
+        if (idx > 0) btn.style.marginLeft = '8px';
+        btn.onclick = async () => {
+          if (it.action === 'stop' && !confirm('确定停止机器人？停止后不再扫描和回复，需要手动再点启动。')) {
+            return;
+          }
+          box.querySelectorAll('button').forEach(b => { b.disabled = true; });
+          btn.textContent = '处理中…';
+          try {
+            const r = await fetch('/api/bot/' + it.action, { method: 'POST' });
+            const j = await r.json();
+            if (!j.ok) alert(j.msg || '操作失败');
+            else if (j.msg && it.action === 'stop') alert(j.msg);
+          } catch (e) {
+            alert('请求失败：' + e);
+          }
+          box.dataset.key = '';
+          setTimeout(refresh, it.action === 'stop' ? 1500 : 800);
+        };
+        box.appendChild(btn);
+      });
+    }
+
+    refresh();
+    setInterval(refresh, 10000);
+  })();
+</script>
+{% endblock %}

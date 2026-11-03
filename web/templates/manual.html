@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}待人工{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>待人工确认</h1>
+    <div class="sub">{{ rows|length }} 条 · 本页只做状态流转，实际发送由机器人主程序执行</div>
+  </div>
+  <a class="btn" href="{{ url_for('manual') }}">刷新</a>
+</div>
+
+{% if rows %}
+<div class="cards">
+  {% for r in rows %}
+  <div class="mcard">
+    <div class="img">
+      {% if r.image_path %}
+      <img src="{{ url_for('images', filename=r.image_path) }}" data-zoom alt="订单截图">
+      {% else %}
+      <span class="muted">无截图</span>
+      {% endif %}
+    </div>
+    <div class="meta">
+      <div class="row"><span class="k">群</span><span>{{ r.group_name }}</span></div>
+      <div class="row"><span class="k">昵称</span><span>{{ r.sender or '-' }}</span></div>
+      <div class="row"><span class="k">时间</span><span class="muted">{{ r.created_at|dt }}</span></div>
+      <div class="row"><span class="k">置信度</span><span class="muted">{{ r.min_confidence|pct }}</span></div>
+      <div class="row"><span class="k">明细校验</span>
+        <span>
+          {% if r.detail_check == 'pass' %}<span class="badge ok">通过</span>
+          {% elif r.detail_check == 'fail' %}<span class="badge bad">不通过</span>
+          {% else %}<span class="badge muted">未校验</span>{% endif %}
+        </span>
+      </div>
+      <div class="price">
+        {{ yuan(r.final_cents) }} 元
+        <span class="cut">{{ yuan(r.ocr_total_cents) }}</span>
+      </div>
+      {% if r.note %}<div class="row"><span class="k">原因</span><span class="muted">{{ r.note }}</span></div>{% endif %}
+    </div>
+    <div class="acts">
+      <form method="post" action="{{ url_for('api_approve', order_id=r.id) }}" style="flex:1">
+        <button class="btn primary" type="submit" style="width:100%">交回机器人重试</button>
+      </form>
+      <form method="post" action="{{ url_for('api_reject', order_id=r.id) }}" style="flex:1">
+        <button class="btn danger" type="submit" style="width:100%">忽略</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel">
+  <div class="empty-state">
+    <div class="big">没有待人工的订单</div>
+    <div>所有订单都已自动处理，或还没有数据</div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

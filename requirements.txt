@@ -1,0 +1,28 @@
+# 微信多群订单自动报价 — Python 依赖
+#
+# 安装：python -m pip install -r requirements.txt
+# 注意：清华镜像在本机不可达，直接用默认源即可。
+# 实测环境：Python 3.13.14 / Windows / 微信 4.1.15.13
+
+# --- 图像与像素运算 ---
+pillow>=12.0.0
+numpy>=2.0.0
+
+# --- 本地 OCR（通道 B：交叉校验，证明数字真的在图上）---
+# 首次运行会下载 ONNX 模型（约 15MB），需联网一次；之后可离线
+rapidocr>=3.10.0
+onnxruntime>=1.31.0
+opencv-python-headless>=5.0.0
+
+# --- 云端视觉大模型调用（通道 A：主力识别）---
+requests>=2.31.0
+
+# --- 剪贴板文本读写（发送消息用）---
+pyperclip>=1.8.2
+
+# --- 订单面板 Web 服务 ---
+flask>=3.0
+
+# --- 说明 ---
+# 标准库，无需安装：ctypes / winreg / sqlite3 / struct / hashlib / json / re
+# Windows 专有：版本资源走 version.dll；剪贴板图片走 CF_DIB（纯 ctypes，不依赖 pywin32）

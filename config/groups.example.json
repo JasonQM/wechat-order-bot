@@ -1,0 +1,37 @@
+{
+  "_说明": "指定哪些群需要回复。在 Web 面板的「群管理」页可视化编辑，不必手改这个文件。",
+  "_mode": "whitelist=只回下列群 / blacklist=下列群以外都回 / all=全部群（不推荐）",
+  "mode": "whitelist",
+  "_groups_说明": "name 填群名，不用带人数。群名带 emoji 或特殊符号时建议填 alias 纯文字版本。",
+  "groups": [
+    {
+      "id": "example01",
+      "name": "示例加油站群-1",
+      "alias": "",
+      "enabled": true,
+      "note": "改成你自己的群名"
+    },
+    {
+      "id": "example02",
+      "name": "示例加油站群-2",
+      "alias": "",
+      "enabled": false,
+      "note": ""
+    }
+  ],
+  "_exclude_keywords": "群名含这些词一律不处理，优先级高于白名单。",
+  "exclude_keywords": [
+    "测试",
+    "内部",
+    "禁言"
+  ],
+  "_match_说明": "微信群名后面会带 (128) 这种人数，默认忽略。allow_contains 打开后允许'群名包含'匹配，有误伤风险，默认关。",
+  "match": {
+    "ignore_member_count": true,
+    "ignore_space": true,
+    "ignore_case": true,
+    "allow_contains": false
+  },
+  "_折扣说明": "折扣是全局一个系数（0.95），不在这里按群配置。",
+  "_example说明": "这是群配置模板。复制成 config/groups.json 再填自己的群：\n  copy config\\groups.example.json config\\groups.json\n也可以在 Web 面板的「群管理」页直接加，不用手改 JSON。"
+}

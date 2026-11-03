@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}回复设置{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>回复设置</h1>
+    <div class="sub">回复的图片和文案都在这里改，机器人下一轮就生效，不用重启</div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>固定图片</h2>
+      <span class="muted">金额文本发完之后跟着发这张</span>
+    </div>
+    <div class="panel-body">
+      <div class="warn-box">
+        这张图<b>每一次回复都会直接发到客户群里</b>。请确认它是你的收款码 / 价目表，
+        千万别传成客户发来的订单截图。
+      </div>
+
+      <div class="asset-preview">
+        {% if img.exists %}
+        <img src="{{ url_for('assets_file', filename=img.name) }}?t={{ range(1000)|random }}" alt="固定图片">
+        {% else %}
+        <div class="asset-empty">还没有图片</div>
+        {% endif %}
+      </div>
+
+      {% if img.exists %}
+      <div class="asset-meta">
+        <span>{{ img.name }}</span>
+        <span>{{ img.dims }}</span>
+        <span>{{ img.size_kb }} KB</span>
+        <span class="muted">{{ img.mtime }}</span>
+        <span class="muted" title="发送日志里也会打同一个指纹，两边一致才算真的换掉了">指纹 {{ img.fingerprint }}</span>
+      </div>
+      <p class="tip" style="margin-top:-6px">
+        机器人发图时会在日志里打印 <code>固定图片：… 指纹=xxxx</code>，和这里的指纹一致，才说明发出去的就是这一张。
+      </p>
+      {% endif %}
+
+      <form method="post" action="{{ url_for('reply_upload') }}"
+            enctype="multipart/form-data" class="upload-row">
+        <input type="file" name="file" accept="image/png,image/jpeg,image/webp,image/bmp" required>
+        <button class="btn primary" type="submit">上传并替换</button>
+      </form>
+
+      <p class="tip">
+        建议用正方形或竖版图片（收款码、价目表都合适），边长不小于 400px。
+        上传后会立刻替换掉旧图，旧的会自动清理。上限 8MB。
+      </p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>文案预览</h2></div>
+    <div class="panel-body">
+      <div class="bubble-preview">{{ preview }}</div>
+      <p class="tip">
+        示例：截图合计 119.80 元，95 折后 113.81 元，发送者「张三」。
+        实际发送时昵称取群里那位客户的昵称。
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h2>回复文案与折扣</h2></div>
+  <div class="panel-body">
+    <form method="post" action="{{ url_for('reply_save') }}">
+      <div class="field" style="margin-bottom:14px">
+        <label>回复文案模板</label>
+        <input type="text" name="template" value="{{ conf.reply.template }}" style="width:100%">
+      </div>
+
+      <div class="filters" style="margin-bottom:14px">
+        <div class="field">
+          <label>折扣系数（95 = 95 折）</label>
+          <input type="number" name="discount_percent" min="1" max="100"
+                 value="{{ conf.discount_percent }}" style="width:120px">
+        </div>
+        <div class="field">
+          <label>折扣文案（写进回复里）</label>
+          <input type="text" name="discount_label"
+                 value="{{ conf.reply.discount_label or '' }}" style="width:140px">
+        </div>
+        <label class="check" style="padding-bottom:10px">
+          <input type="checkbox" name="mention" {{ 'checked' if conf.reply.mention }}>
+          回复时 @ 发起人
+        </label>
+      </div>
+
+      <div class="tip" style="margin:0 0 14px">
+        可用占位符：<code>{name}</code> 客户昵称（为空时自动去掉前缀）、
+        <code>{total}</code> 截图合计、<code>{final}</code> 折后实付、
+        <code>{discount_percent}</code> 折扣数字、<code>{discount_label}</code> 折扣文案。
+        <b>必须包含 <code>{final}</code></b>，否则客户看不到实付金额。
+      </div>
+
+      <button class="btn primary" type="submit">保存</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

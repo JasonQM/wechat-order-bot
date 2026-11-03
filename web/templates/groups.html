@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}群管理{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>群管理</h1>
+    <div class="sub">
+      当前模式
+      <b>{{ dict(modes).get(conf.mode, conf.mode) }}</b>
+      · 已配置 {{ conf.groups|length }} 个群（启用 {{ conf.groups|selectattr('enabled')|list|length }} 个）
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h2>全局设置</h2></div>
+  <div class="panel-body">
+    <form method="post" action="{{ url_for('groups_settings') }}" class="filters">
+      <div class="field" style="min-width:240px">
+        <label>回复范围</label>
+        <select name="mode">
+          {% for k, label in modes %}
+          <option value="{{ k }}" {{ 'selected' if conf.mode == k }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field" style="flex:1;min-width:240px">
+        <label>排除关键词（逗号分隔，优先级高于名单）</label>
+        <input type="text" name="exclude_keywords" value="{{ exclude }}"
+               placeholder="测试,内部,禁言">
+      </div>
+      <label class="check">
+        <input type="checkbox" name="allow_contains"
+               {{ 'checked' if conf.match.get('allow_contains') }}>
+        允许「包含」匹配（有误伤风险）
+      </label>
+      <button class="btn primary" type="submit">保存设置</button>
+    </form>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="panel">
+    <div class="panel-head"><h2>添加群</h2></div>
+    <div class="panel-body">
+      <form method="post" action="{{ url_for('groups_add') }}" class="filters">
+        <div class="field" style="flex:1;min-width:180px">
+          <label>群名（不用带人数）</label>
+          <input type="text" name="name" placeholder="五常大米下单群" required>
+        </div>
+        <div class="field" style="min-width:130px">
+          <label>别名（可选）</label>
+          <input type="text" name="alias" placeholder="群名有 emoji 时填">
+        </div>
+        <button class="btn primary" type="submit">添加</button>
+      </form>
+      <p class="tip">
+        群名要跟你微信里看到的一致。名字带 emoji 或特殊符号时，OCR 容易认错，
+        建议在「别名」里填一个纯文字版本。
+      </p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>批量导入</h2></div>
+    <div class="panel-body">
+      <form method="post" action="{{ url_for('groups_add_many') }}">
+        <textarea name="bulk" rows="4" placeholder="每行一个群名&#10;五常大米下单群&#10;粮油批发1群,粮油&#10;# 井号开头是注释"></textarea>
+        <div style="margin-top:10px">
+          <button class="btn primary" type="submit">导入</button>
+          <span class="tip" style="margin-left:10px">可用「群名,别名」的写法</span>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>群列表</h2>
+    <span class="muted">改完点「保存」，只影响该行</span>
+  </div>
+  <div class="panel-body tight">
+    {% if conf.groups %}
+    <table>
+      <thead>
+        <tr>
+          <th style="width:64px">启用</th>
+          <th>群名</th>
+          <th style="width:190px">别名</th>
+          <th style="width:190px">备注</th>
+          <th style="width:150px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in conf.groups %}
+        <tr class="{{ '' if g.enabled else 'disabled' }}">
+          <td>
+            <form method="post" action="{{ url_for('groups_toggle', gid=g.id) }}">
+              <label class="switch">
+                <input type="checkbox" {{ 'checked' if g.enabled }} onchange="this.form.submit()">
+                <span></span>
+              </label>
+            </form>
+          </td>
+          <td>
+            <input form="f-{{ g.id }}" type="text" name="name" value="{{ g.name }}" style="width:100%">
+          </td>
+          <td>
+            <input form="f-{{ g.id }}" type="text" name="alias" value="{{ g.alias or '' }}" style="width:100%">
+          </td>
+          <td>
+            <input form="f-{{ g.id }}" type="text" name="note" value="{{ g.note or '' }}" style="width:100%">
+          </td>
+          <td class="nowrap">
+            <form id="f-{{ g.id }}" method="post" action="{{ url_for('groups_update', gid=g.id) }}" style="display:inline"></form>
+            <button class="btn sm" type="submit" form="f-{{ g.id }}">保存</button>
+            <form method="post" action="{{ url_for('groups_delete', gid=g.id) }}" style="display:inline"
+                  onsubmit="return confirm('确定删除「{{ g.name }}」？')">
+              <button class="btn sm danger" type="submit">删除</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+      <div class="big">还没有配置任何群</div>
+      <div>用上面的「添加群」或「批量导入」加进来</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>测试匹配</h2>
+    <span class="muted">拿微信顶栏看到的群名来试，含人数也行</span>
+  </div>
+  <div class="panel-body">
+    <form method="get" action="{{ url_for('groups_test') }}" class="filters">
+      <div class="field" style="flex:1;min-width:260px">
+        <label>群名</label>
+        <input type="text" name="title" value="{{ test_title }}" placeholder="五常大米下单群(128)">
+      </div>
+      <button class="btn primary" type="submit">测试</button>
+    </form>
+
+    {% if test_result %}
+    <div class="result {{ 'ok' if test_result.allowed else 'bad' }}">
+      <div class="verdict">
+        {{ '会回复' if test_result.allowed else '不会回复' }}
+        <span class="why">{{ test_result.reason }}</span>
+      </div>
+      <div class="detail">
+        命中配置：{{ test_result.canonical or '—' }}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
