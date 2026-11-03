@@ -334,6 +334,18 @@ def scroll_chat(hwnd, layout, rect, up=True, notches=5, verify=True):
     return True, "pagekey"
 
 
+# 滚动结果三态。
+#
+# 早先只有 True/False，而 False 的判据是"画面从没变过"——
+# 这样一来"滚到了底"和"滚不动了但没到头"（比如窗口被遮挡、
+# PostMessage 没送达）会混成同一个 True，于是这一轮会被当成
+# "扫描完整"，实际上新消息根本不在屏幕上。
+# 只有确认过才能算完整，其余一律当不确定，让上层去打日志。
+SCROLL_CONFIRMED = "confirmed"    # 画面连续不动，确认已到底
+SCROLL_UNCERTAIN = "uncertain"    # 按满次数仍不稳定，不知道到没到底
+SCROLL_FAILED = "failed"          # 画面压根没动过，滚动没生效
+
+
 def scroll_to_bottom(hwnd, layout, rect, times=10):
     """
     强行滚到最底部。
@@ -366,15 +378,16 @@ def scroll_to_bottom(hwnd, layout, rect, times=10):
         if sig == prev:
             still += 1
             if still >= 2:
-                return True
+                return SCROLL_CONFIRMED
         else:
             still = 0
         prev = sig
 
         _send_page_key(hwnd, lay, up=False)
 
-    # 到了次数上限还没稳定：中途确实动过就当作到底了（多半是动画没停）
-    return prev is not None
+    # 到了次数上限还没稳定：只能说"翻动过"，不能说"翻到底了"。
+    # 画面从没变过则是滚动完全没生效。
+    return SCROLL_UNCERTAIN if prev else SCROLL_FAILED
 
 
 # ---------------------------------------------------------------- 顶部分界线

@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS orders (
     note            TEXT,
     replied         INTEGER NOT NULL DEFAULT 0,
     replied_at      TEXT,
+    text_sent       INTEGER NOT NULL DEFAULT 0,
+    image_sent      INTEGER NOT NULL DEFAULT 0,
     updated_at      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at DESC);
@@ -97,6 +99,11 @@ MIGRATIONS = [
     # 实际发出去的那张固定图片指纹。留它是为了「发的图到底是不是最新那张」
     # 这类问题以后能直接查记录，不用再靠翻日志对时间。
     ("reply_image_fp", "ALTER TABLE orders ADD COLUMN reply_image_fp TEXT"),
+    # 发送是两步（发文本 + 发收款码），中间可能崩掉。
+    # 只有一个状态字段的话，"文本发了图没发"和"啥都没发"都看不出来，
+    # 重启后要靠翻微信记录才知道该补哪一步。
+    ("text_sent", "ALTER TABLE orders ADD COLUMN text_sent INTEGER NOT NULL DEFAULT 0"),
+    ("image_sent", "ALTER TABLE orders ADD COLUMN image_sent INTEGER NOT NULL DEFAULT 0"),
     # 聊天窗口里那张【缩略图】的 dHash。
     #
     # 为什么必须和 image_sha256 分开存：两者不是同一种东西。
@@ -340,7 +347,18 @@ def hamming_hex(a, b):
         return 999
 
 
-def find_by_sha(group_name, image_sha256, max_dist=12, limit=400):
+# 图片指纹的两档阈值。实测数据：
+#   同一张图不同抓取的抖动：4 / 7 / 7（最大 7）
+#   不同照片之间的距离：80 ~ 117（最小 80）
+# 所以 7 以内可以确定是同一张图；8~12 是"不敢确定"的灰区。
+#
+# 灰区必须转人工，不能直接判重复丢掉：同一台加油机、同一个角度，
+# 两次加油只改了金额，画面结构几乎一样，感知哈希的距离会非常小。
+# 这种图被当成重复丢弃，就是实实在在的漏单 —— 客户发了新订单没人回。
+SHA_EXACT = 7
+
+
+def find_by_sha(group_name, image_sha256, max_dist=12, limit=400, with_dist=False):
     """
     按「群 + 图片内容指纹」查是否已处理过。这是防重复报价的主键。
 
@@ -367,7 +385,12 @@ def find_by_sha(group_name, image_sha256, max_dist=12, limit=400):
         d = hamming_hex(r["image_sha256"], image_sha256)
         if d < best_d:
             best, best_d = r, d
-    return best if best_d <= max_dist else None
+    hit = best if best_d <= max_dist else None
+    if with_dist:
+        # 连距离一起返回：调用方需要区分"确定是同一张图"（≤SHA_EXACT）
+        # 和"看起来像但不敢确定"（灰区），后者要转人工，不能直接丢弃。
+        return hit, best_d
+    return hit
 
 
 # 缩略图指纹的汉明距离阈值。
@@ -530,7 +553,7 @@ def update_order(order_id, **fields):
         "sender", "ocr_total_cents", "discount_rate", "final_cents",
         "min_confidence", "status", "at_result", "elapsed_ms",
         "detail_check", "ocr_text", "model_json", "note",
-        "reply_image_fp", "thumb_sha",
+        "reply_image_fp", "thumb_sha", "text_sent", "image_sent",
     }
     sets, params = [], []
     for k, v in fields.items():

@@ -345,7 +345,10 @@ class Bot:
             os.remove(tmp_path)
             return False, "dup_session"
 
-        existed = store.find_by_sha(group_name, dedupe_key)
+        # 疑似相似但不确定是否同一单的那条旧订单（见下面的距离分级）
+        suspect = None
+
+        existed, dist = store.find_by_sha(group_name, dedupe_key, with_dist=True)
         if existed:
             st = existed["status"]
             # 记下这处观察。同一张照片可能被连发好几次、占好几个位置，
@@ -353,8 +356,19 @@ class Bot:
             # 而不是往订单上覆盖一个值。
             if tkey:
                 store.add_seen_thumb(group_name, tkey, existed["id"])
-            # 已发送 / 待人工：跳过，绝不重复
-            if st in ("auto_sent", "manual_sent", "manual_pending"):
+
+            if dist > store.SHA_EXACT:
+                # 落在"不敢确定"的灰区：画面结构像，但没法确认是不是同一张。
+                #
+                # 绝不能当重复丢掉 —— 同一台加油机、同一个角度，
+                # 两次加油只改了金额，感知哈希距离会非常小，这种情况丢掉
+                # 就是漏单。也不能当新订单直接报价 —— 万一是同一张，
+                # 客户会收到两条报价。
+                # 走完识别再说，最后强制转人工，让人看金额一眼定夺。
+                suspect = existed
+                log(f"  · 与订单 #{existed['id']} 图相似（指纹距离 {dist}），"
+                    f"不确定是否同一单，识别后交人工确认")
+            elif st in ("auto_sent", "manual_sent", "manual_pending"):
                 os.remove(tmp_path)
                 self.handled[skey] = existed["id"]
                 log(f"  · 这张图处理过（订单 #{existed['id']}，{st}），跳过")
@@ -367,7 +381,7 @@ class Bot:
                 existed = None
 
             # ready：识别已完成、只是还没发出去 —— 接着发，不重新建单
-            if existed and st == "ready" and existed["final_cents"]:
+            if suspect is None and existed and st == "ready" and existed["final_cents"]:
                 os.remove(tmp_path)
                 self.handled[skey] = existed["id"]
                 log(f"  · 订单 #{existed['id']} 已识别待发送，续跑发送")
@@ -468,6 +482,24 @@ class Bot:
         log(f"  · 订单 #{order_id} 识别完成：{pricing.format_cents(total_cents)} → "
             f"{pricing.format_cents(final_cents)} 元")
 
+        # 灰区：这张图和某条旧订单太像，拿不准是不是同一单。
+        #
+        # 报价一旦发出去就收不回 —— 如果其实是同一单，客户会收到两条报价；
+        # 如果直接当重复丢掉，就是把新订单漏了。两种代价都不小，
+        # 而唯一能区分的人看一眼就懂（两单金额一不一样）。
+        # 所以识别结果照写、金额照算，但不发，交给人决定。
+        if suspect:
+            store.update_order(
+                order_id,
+                status="manual_pending",
+                note=(f"与订单 #{suspect['id']} 图相似（指纹距离 {dist}），"
+                      f"可能是同一张、也可能是两次加油拍的。"
+                      f"本图识别为 {pricing.format_cents(total_cents)} 元，"
+                      f"请对比 #{suspect['id']} 的金额：相同就忽略这条，不同就放行"),
+            )
+            log(f"  ⚠ 订单 #{order_id} 待人工确认（与 #{suspect['id']} 图相似，不自动发）")
+            return True, "manual_pending"
+
         # ---------- 第三阶段：回复 ----------
         return True, self._reply_order(hwnd, layout, rect, group_name,
                                        order_id, sender_name, final_cents)
@@ -496,6 +528,10 @@ class Bot:
         status = "auto_sent"
         note = ""
         reply_image_fp = ""
+        # 两步发送各自记账：文本 / 收款码。
+        # 中途崩掉也能从库里看出到底发到哪一步了，不会"看起来没发过"。
+        text_ok = False
+        img_ok = False
 
         # 记住用户当前在用的窗口，发完还回去。
         # 发消息必须把微信拿到前台（要模拟键盘输入），但没理由霸占着不放。
@@ -518,6 +554,7 @@ class Bot:
                 status = "failed"
                 note = r1.get("note", "")
             else:
+                text_ok = True
                 time.sleep(0.6)
                 img_path = config.path_of(conf["reply"].get("image", ""))
                 if img_path and os.path.isfile(img_path):
@@ -546,6 +583,8 @@ class Bot:
                     elif r2.get("verified") is False:
                         status = "manual_pending"
                         note = "文本已发；收款码未检出增量，请人工确认是否已发出"
+                    else:
+                        img_ok = True
                 else:
                     note = "未配置固定图片，只发了文本"
                 self._mark_sent(group_name)
@@ -564,7 +603,9 @@ class Bot:
                 pass
 
         store.update_order(order_id, at_result=at_result,
-                           reply_image_fp=reply_image_fp or None)
+                           reply_image_fp=reply_image_fp or None,
+                           text_sent=1 if text_ok else 0,
+                           image_sent=1 if img_ok else 0)
         if status in ("auto_sent", "manual_sent"):
             store.mark_replied(order_id, status, note[:500] or None)
             log(f"  ✓ 订单 #{order_id} 已回复 {pricing.format_cents(final_cents)} 元 {note}")
@@ -636,8 +677,15 @@ class Bot:
         # 进群先确认视图在最底部。
         # 如果停在上面的历史位置，新消息根本不在屏幕上，会被当成"没有新消息"。
         try:
-            if not desktop.scroll_to_bottom(hwnd, layout, rect):
-                log("  ⚠ 未能确认滚到最底部，本轮可能看不到最新消息")
+            r = desktop.scroll_to_bottom(hwnd, layout, rect)
+            if r == desktop.SCROLL_FAILED:
+                # 画面一次都没动过：滚动完全没生效，多半是窗口被遮挡/最小化。
+                # 这时候继续扫只会扫到旧画面，结果毫无意义，还会给人
+                # "已经巡检过这个群"的错觉 —— 那正是漏单最难被发现的形态。
+                log("  ✗ 聊天区完全没滚动（窗口可能被遮挡），本群跳过")
+                return 0
+            if r == desktop.SCROLL_UNCERTAIN:
+                log("  ⚠ 未能确认已滚到底部，本轮结果可能不完整")
         except Exception as e:
             log(f"  ⚠ 滚到底部时出错：{e}")
         max_screens = int(self.conf["safety"].get("max_scroll_screens", 5))
